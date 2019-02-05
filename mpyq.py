@@ -192,7 +192,8 @@ class MPQArchive(object):
             elif compression_type == 16:
                 return bz2.decompress(data[1:])
             else:
-                raise RuntimeError("Unsupported compression type.")
+                print("warning: Unsupported compression type: {} for file {}.".format(hex(compression_type), filename))
+                return data
 
         hash_entry = self.get_hash_table_entry(filename)
         if hash_entry is None:
@@ -209,7 +210,8 @@ class MPQArchive(object):
             file_data = self.file.read(block_entry.archived_size)
 
             if block_entry.flags & MPQ_FILE_ENCRYPTED:
-                raise NotImplementedError("Encryption is not supported yet.")
+                print("warning: Encryption is not supported yet. File: {}, Flags: {}".format(filename, hex(block_entry.flags)))
+                return file_data
 
             if not block_entry.flags & MPQ_FILE_SINGLE_UNIT:
                 # File consists of many sectors. They all need to be
@@ -243,20 +245,23 @@ class MPQArchive(object):
 
             return file_data
 
-    def extract(self):
+    def extract(self, files=None):
         """Extract all the files inside the MPQ archive in memory."""
-        if self.files:
-            return dict((f, self.read_file(f)) for f in self.files)
+        files = files or self.files
+        if files:
+            return dict((f, self.read_file(f)) for f in files)
         else:
             raise RuntimeError("Can't extract whole archive without listfile.")
 
-    def extract_to_disk(self):
+    def extract_to_disk(self, files=None):
         """Extract all files and write them to disk."""
         archive_name, extension = os.path.splitext(os.path.basename(self.file.name))
         if not os.path.isdir(os.path.join(os.getcwd(), archive_name)):
             os.mkdir(archive_name)
         os.chdir(archive_name)
-        for filename, data in self.extract().items():
+        print(os.getcwd())
+        for filename, data in self.extract(files).items():
+            print(filename, data and len(data) or '(nofile)')
             f = open(filename, 'wb')
             f.write(data or b'')
             f.close()
@@ -379,6 +384,7 @@ def main():
     description = "mpyq reads and extracts MPQ archives."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("file", action="store", help="path to the archive")
+    parser.add_argument("listfile", action="store", help="path to the external listfile")
     parser.add_argument("-I", "--headers", action="store_true", dest="headers",
                         help="print header information from the archive")
     parser.add_argument("-H", "--hash-table", action="store_true",
@@ -406,7 +412,9 @@ def main():
         if args.list:
             archive.print_files()
         if args.extract:
-            archive.extract_to_disk()
+            with open(args.listfile, 'r') as fp:
+                files = fp.read().splitlines()
+            archive.extract_to_disk(files=files)
 
 
 if __name__ == '__main__':
