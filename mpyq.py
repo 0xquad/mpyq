@@ -33,7 +33,7 @@ from enum import Enum
 CompressionType = Enum('CompressionType', dict(
     NONE = 0,
     DEFLATE = 2,    # zlib
-    PKLIB = 8,      # actually a TTComp compressed stream, see
+    IMPLODE = 8,    # actually a TTComp compressed stream, see
                     # http://fileformats.archiveteam.org/wiki/TTComp_archive,
                     # same as IMPLODE which implements a Sannon-Fano-based
                     # algorithm, from the PKWare Inc. tools.
@@ -221,7 +221,7 @@ class MPQArchive(object):
                 return zlib.decompress(data, 15)
             elif compression_type == CompressionType.BZIP2:
                 return bz2.decompress(data)
-            elif compression_type == CompressionType.PKLIB:
+            elif compression_type == CompressionType.IMPLODE:
                 ttdecomp = shutil.which('ttdecomp')
                 if ttdecomp:
                     tmpfd, tmpname = tempfile.mkstemp()
@@ -284,7 +284,7 @@ class MPQArchive(object):
                     flags = block_entry.flags
                     if sector.startswith(b'\x00\x06'):
                         flags |= MPQ_FILE_COMPRESS
-                        sector = bytes([CompressionType.PKLIB.value]) + sector
+                        sector = bytes([CompressionType.IMPLODE.value]) + sector
 
                     if (flags & MPQ_FILE_COMPRESS and
                         (force_decompress or sector_bytes_left > len(sector))):
