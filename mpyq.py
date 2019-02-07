@@ -11,6 +11,7 @@ import bz2
 import os
 import struct
 import zlib
+import tempfile, shutil, subprocess
 from collections import namedtuple
 from io import BytesIO
 
@@ -27,6 +28,29 @@ MPQ_FILE_SINGLE_UNIT    = 0x01000000
 MPQ_FILE_DELETE_MARKER  = 0x02000000
 MPQ_FILE_SECTOR_CRC     = 0x04000000
 MPQ_FILE_EXISTS         = 0x80000000
+
+from enum import Enum
+CompressionType = Enum('CompressionType', dict(
+    NONE = 0,
+    DEFLATE = 2,    # zlib
+    PKLIB = 8,      # actually a TTComp compressed stream, see
+                    # http://fileformats.archiveteam.org/wiki/TTComp_archive,
+                    # same as IMPLODE which implements a Sannon-Fano-based
+                    # algorithm, from the PKWare Inc. tools.
+                    # C implementations (no pure python impl so far):
+                    # https://github.com/ge0rg/libmpq/blob/master/libmpq/explode.c
+                    # https://github.com/ladislav-zezula/StormLib/blob/master/src/pklib/explode.c
+                    # http://www.exelana.com/techie/c/ttdecomp.html from
+                    #  https://github.com/axx1611/lawine, an old Google project from
+                    #  https://code.google.com/archive/p/lawine/
+                    # Possible Python impl: https://github.com/Mohammed-Ashour/Shannon-Fano-Algorithm
+                    # At the moment we use the external ttdecomp tool to process these.
+    BZIP2 = 16,
+    LZMA = 18,
+    SPARSE = 32,
+    ADPCM = 64,
+    ADPCM_STEREO = 128,
+))
 
 MPQFileHeader = namedtuple('MPQFileHeader',
     '''
@@ -184,16 +208,37 @@ class MPQArchive(object):
 
         def decompress(data):
             """Read the compression type and decompress file data."""
-            compression_type = ord(data[0:1])
-            if compression_type == 0:
+
+            try:
+                compression_type, data = CompressionType(data[0]), data[1:]
+            except ValueError as e:
+                e.message = "warning: Unsupported compression type: {} for file {} (len={}).".format(hex(data[0]), filename, len(data))
+                raise
+
+            if compression_type == CompressionType.NONE:
                 return data
-            elif compression_type == 2:
-                return zlib.decompress(data[1:], 15)
-            elif compression_type == 16:
-                return bz2.decompress(data[1:])
-            else:
-                print("warning: Unsupported compression type: {} for file {}.".format(hex(compression_type), filename))
+            elif compression_type == CompressionType.DEFLATE:
+                return zlib.decompress(data, 15)
+            elif compression_type == CompressionType.BZIP2:
+                return bz2.decompress(data)
+            elif compression_type == CompressionType.PKLIB:
+                ttdecomp = shutil.which('ttdecomp')
+                if ttdecomp:
+                    tmpfd, tmpname = tempfile.mkstemp()
+                    os.write(tmpfd, data)
+                    os.close(tmpfd)
+                    proc = subprocess.run([ttdecomp, tmpname, '/dev/stdout'], stdout=subprocess.PIPE)
+                    data = proc.stdout
+                    os.unlink(tmpname)
                 return data
+            elif compression_type == CompressionType.LZMA:
+                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+            elif compression_type == CompressionType.SPARSE:
+                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+            elif compression_type == CompressionType.ADPCM:
+                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+            elif compression_type == CompressionType.ADPCM_STEREO:
+                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
 
         hash_entry = self.get_hash_table_entry(filename)
         if hash_entry is None:
@@ -227,11 +272,28 @@ class MPQArchive(object):
                                           file_data[:4*(sectors+1)])
                 result = BytesIO()
                 sector_bytes_left = block_entry.size
+                key = self._hash('(block hash)', 'HASH_NUM')
                 for i in range(len(positions) - (2 if crc else 1)):
                     sector = file_data[positions[i]:positions[i+1]]
-                    if (block_entry.flags & MPQ_FILE_COMPRESS and
+
+                    #if block_entry.flags & MPQ_FILE_ENCRYPTED:
+                    #    sector = self._decrypt(sector, key + i)
+
+                    # Some block entries are actually compressed, but do not
+                    # give any indication. Fix it with a special case check.
+                    flags = block_entry.flags
+                    if sector.startswith(b'\x00\x06'):
+                        flags |= MPQ_FILE_COMPRESS
+                        sector = bytes([CompressionType.PKLIB.value]) + sector
+
+                    if (flags & MPQ_FILE_COMPRESS and
                         (force_decompress or sector_bytes_left > len(sector))):
-                        sector = decompress(sector)
+                        try:
+                            sector = decompress(sector)
+                        except IndexError:
+                            print('Detected a problem with this sector:')
+                            print(sector, block_entry, sector_bytes_left, positions, key)
+                            raise
 
                     sector_bytes_left -= len(sector)
                     result.write(sector)
@@ -259,10 +321,10 @@ class MPQArchive(object):
         if not os.path.isdir(os.path.join(os.getcwd(), archive_name)):
             os.mkdir(archive_name)
         os.chdir(archive_name)
-        print(os.getcwd())
         for filename, data in self.extract(files).items():
             print(filename, data and len(data) or '(nofile)')
-            f = open(filename, 'wb')
+            basename = os.path.basename(filename.replace('\\', '/'))
+            f = open(basename, 'wb')
             f.write(data or b'')
             f.close()
 
@@ -270,7 +332,8 @@ class MPQArchive(object):
         """Extract given files from the archive to disk."""
         for filename in filenames:
             data = self.read_file(filename)
-            f = open(filename, 'wb')
+            basename = os.path.basename(filename.replace('\\', '/'))
+            f = open(basename, 'wb')
             f.write(data or b'')
             f.close()
 
@@ -323,7 +386,8 @@ class MPQArchive(object):
             'TABLE_OFFSET': 0,
             'HASH_A': 1,
             'HASH_B': 2,
-            'TABLE': 3
+            'TABLE': 3,
+            'HASH_NUM': 4,
         }
         seed1 = 0x7FED7FED
         seed2 = 0xEEEEEEEE
