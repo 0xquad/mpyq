@@ -203,9 +203,18 @@ class MPQArchive(object):
             if (entry.hash_a == hash_a and entry.hash_b == hash_b):
                 return entry
 
+    def get_file_key(self, filename, block_entry, strip=True):
+        basename = os.path.basename(filename.replace('\\', '//')) if strip else filename
+        key = self._hash(basename, 'TABLE')
+        if block_entry.flags & MPQ_FILE_FIX_KEY:
+            key += block_entry.offset - self.header['offset']
+            key ^= block_entry.size
+        return key
+
     def read_file(self, filename, force_decompress=False):
         """Read a file from the MPQ archive."""
 
+        print('processing', filename, '...')
         def decompress(data):
             """Read the compression type and decompress file data."""
 
@@ -227,9 +236,15 @@ class MPQArchive(object):
                     tmpfd, tmpname = tempfile.mkstemp()
                     os.write(tmpfd, data)
                     os.close(tmpfd)
-                    proc = subprocess.run([ttdecomp, tmpname, '/dev/stdout'], stdout=subprocess.PIPE)
-                    data = proc.stdout
+                    proc = subprocess.run([ttdecomp, tmpname, '/dev/stdout'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if proc.returncode != 0:
+                        print("Output of ttdecomp:")
+                        print(proc.stderr.decode())
+                        errmsg = 'Unable to decompress data: ' + data.hex()[:32] + '...'
+                        print('warning:', errmsg)
+                        #raise errmsg
                     os.unlink(tmpname)
+                    data = proc.stdout
                 return data
             elif compression_type == CompressionType.LZMA:
                 raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
@@ -255,8 +270,7 @@ class MPQArchive(object):
             file_data = self.file.read(block_entry.archived_size)
 
             if block_entry.flags & MPQ_FILE_ENCRYPTED:
-                print("warning: Encryption is not supported yet. File: {}, Flags: {}".format(filename, hex(block_entry.flags)))
-                return file_data
+                key = self.get_file_key(filename, block_entry)
 
             if not block_entry.flags & MPQ_FILE_SINGLE_UNIT:
                 # File consists of many sectors. They all need to be
@@ -268,16 +282,24 @@ class MPQArchive(object):
                     sectors += 1
                 else:
                     crc = False
-                positions = struct.unpack('<%dI' % (sectors + 1),
-                                          file_data[:4*(sectors+1)])
+
+                # The positions (Sector Offset Table) may be encrypted too.
+                # The key value is base key - 1.
+                n_offsets = sectors + 1
+                offset_table = file_data[:4 * n_offsets]
+                if block_entry.flags & MPQ_FILE_ENCRYPTED:
+                    offset_table = self._decrypt(offset_table, key - 1)
+                positions = struct.unpack('<%dI' % n_offsets, offset_table)
+
                 result = BytesIO()
                 sector_bytes_left = block_entry.size
-                key = self._hash('(block hash)', 'HASH_NUM')
                 for i in range(len(positions) - (2 if crc else 1)):
                     sector = file_data[positions[i]:positions[i+1]]
 
-                    #if block_entry.flags & MPQ_FILE_ENCRYPTED:
-                    #    sector = self._decrypt(sector, key + i)
+                    if block_entry.flags & MPQ_FILE_ENCRYPTED:
+                        # Data in each sector is encrypted with a key value of
+                        # base key + index of sector.
+                        sector = self._decrypt(sector, key + i)
 
                     # Some block entries are actually compressed, but do not
                     # give any indication. Fix it with a special case check.
@@ -288,12 +310,7 @@ class MPQArchive(object):
 
                     if (flags & MPQ_FILE_COMPRESS and
                         (force_decompress or sector_bytes_left > len(sector))):
-                        try:
                             sector = decompress(sector)
-                        except IndexError:
-                            print('Detected a problem with this sector:')
-                            print(sector, block_entry, sector_bytes_left, positions, key)
-                            raise
 
                     sector_bytes_left -= len(sector)
                     result.write(sector)
@@ -322,7 +339,6 @@ class MPQArchive(object):
             os.mkdir(archive_name)
         os.chdir(archive_name)
         for filename, data in self.extract(files).items():
-            print(filename, data and len(data) or '(nofile)')
             basename = os.path.basename(filename.replace('\\', '/'))
             f = open(basename, 'wb')
             f.write(data or b'')
@@ -448,7 +464,6 @@ def main():
     description = "mpyq reads and extracts MPQ archives."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("file", action="store", help="path to the archive")
-    parser.add_argument("listfile", action="store", help="path to the external listfile")
     parser.add_argument("-I", "--headers", action="store_true", dest="headers",
                         help="print header information from the archive")
     parser.add_argument("-H", "--hash-table", action="store_true",
@@ -461,6 +476,8 @@ def main():
                         help="list files inside the archive")
     parser.add_argument("-x", "--extract", action="store_true", dest="extract",
                         help="extract files from the archive")
+    parser.add_argument("-L", "--listfile", action="store",
+                        help="path to the external listfile")
     args = parser.parse_args()
     if args.file:
         if not args.skip_listfile:
