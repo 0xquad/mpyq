@@ -238,22 +238,29 @@ class MPQArchive(object):
                     os.close(tmpfd)
                     proc = subprocess.run([ttdecomp, tmpname, '/dev/stdout'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     if proc.returncode != 0:
-                        print("Output of ttdecomp:")
-                        print(proc.stderr.decode())
                         errmsg = 'Unable to decompress data: ' + data.hex()[:32] + '...'
+                        err_output = proc.stderr
                         print('warning:', errmsg)
-                        #raise errmsg
+                        if err_output:
+                            print('ttdecomp output:')
+                            print(err_output.decode())
                     os.unlink(tmpname)
                     data = proc.stdout
+                else:
+                   print('warning: unable to find ttdecomp tool in $PATH to decompress the stream')
                 return data
             elif compression_type == CompressionType.LZMA:
-                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+                print('warning: compression method {} not implemented'.format(hex(compression_type.value)))
+                return data
             elif compression_type == CompressionType.SPARSE:
-                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+                print('warning: compression method {} not implemented'.format(hex(compression_type.value)))
+                return data
             elif compression_type == CompressionType.ADPCM:
-                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+                print('warning: compression method {} not implemented'.format(hex(compression_type.value)))
+                return data
             elif compression_type == CompressionType.ADPCM_STEREO:
-                raise NotImplementedError('Compression method {} not implemented'.format(compression_type))
+                print('warning: compression method {} not implemented'.format(hex(compression_type.value)))
+                return data
 
         hash_entry = self.get_hash_table_entry(filename)
         if hash_entry is None:
