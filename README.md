@@ -19,6 +19,24 @@ inside the archive were supported.
 Note that listing files inside an archive does not require full extraction.
 You can safely take a peek inside any MPQ archive with this library.
 
+## This fork at `0xquad/mpyq`
+
+This version brings a few enhancements over `eagleflo`'s version.
+
+* It adds decompression support of PKWARE compressed files with the IMPLODE
+  compression algorithm. It does so by depending on an external tool,
+  `ttdecomp`, available at `0xquad/ttdecomp` (improved version over the
+  original). The full algorithm is not implemented in Python yet.
+
+    1. Clone ttdecomp and run `make` to compile.
+    2. Copy the resulting binary somewhere in your `$PATH` (e.g. `/usr/local/bin`).
+    3. Run `mpyq.py`
+
+* It now supports decryption of individual files in the MPQ archive.
+
+* It adds support for a command line-specified `(listfile)` to extract only a
+  subset of files from the MPQ archive.
+
 ## Installation
 
 A stable version of mpyq is available from PyPI and can be installed with
