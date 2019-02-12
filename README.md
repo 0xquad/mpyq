@@ -7,14 +7,11 @@ replay files.
 In addition to being a library, mpyq also has a command line interface that
 exposes some of the library's core functionality such as extracting archives.
 
-At this early stage in development only files compressed with DEFLATE or bzip2
-are uncompressed. This means that this library can not be used to extract most
-big game asset archives that Blizzard's games use. More compression formats
-will be supported in the future.
-
 Also, as mpyq is so far pure Python code, it might be unfeasible to try to
 extract very large MPQ archives, even if all the compression methods used
-inside the archive were supported.
+inside the archive were supported. This said, this version is able to
+decompress IMPLODEd streams but relies on the presence of the external tool
+`ttdecomp` to do it.
 
 Note that listing files inside an archive does not require full extraction.
 You can safely take a peek inside any MPQ archive with this library.
@@ -36,6 +33,9 @@ This version brings a few enhancements over `eagleflo`'s version.
 
 * It adds support for a command line-specified `(listfile)` to extract only a
   subset of files from the MPQ archive.
+
+This improved version is not available on PyPI. Clone directly from here to use
+it.
 
 ## Installation
 
@@ -114,6 +114,7 @@ For more information, consult `help(mpyq)` in your Python console.
       -s, --skip-listfile  skip reading (listfile)
       -t, --list-files     list files inside the archive
       -x, --extract        extract files from the archive
+      -L, --listfile       path of the external (listfile)
 
 You can extract all the files inside the archive with `-x/--extract`.
 
