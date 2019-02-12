@@ -13,3 +13,4 @@ build/
 *.SC2Maps
 *.SC2Mod
 *.SC2Replay
+.*.sw?
